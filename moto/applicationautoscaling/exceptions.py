@@ -20,3 +20,7 @@ class AWSError(Exception):
 
 class AWSValidationException(AWSError):
     TYPE = "ValidationException"
+
+
+class AWSObjectNotFoundException(AWSError):
+    TYPE = "ObjectNotFoundException"

@@ -52,6 +52,45 @@ class ApplicationAutoScalingResponse(BaseResponse):
             return e.response()
         return json.dumps({})
 
+    def put_scaling_policy(self):
+        policy = self.applicationautoscaling_backend.put_scaling_policy(
+            policy_name=self._get_param("PolicyName"),
+            service_namespace=self._get_param("ServiceNamespace"),
+            resource_id=self._get_param("ResourceId"),
+            scalable_dimension=self._get_param("ScalableDimension"),
+            policy_type=self._get_param("PolicyType"),
+            policy_body=self._get_param(
+                "StepScalingPolicyConfiguration",
+                self._get_param("TargetTrackingScalingPolicyConfiguration"),
+            ),
+        )
+        return json.dumps({"PolicyARN": policy.policy_arn, "Alarms": []})  # ToDo
+
+    def describe_scaling_policies(self):
+        (
+            next_token,
+            policy_page,
+        ) = self.applicationautoscaling_backend.describe_scaling_policies(
+            service_namespace=self._get_param("ServiceNamespace"),
+            resource_id=self._get_param("ResourceId"),
+            scalable_dimension=self._get_param("ScalableDimension"),
+            max_results=self._get_param("MaxResults"),
+            next_token=self._get_param("NextToken"),
+        )
+        response_obj = {"ScalingPolicies": [_build_policy(p) for p in policy_page]}
+        if next_token:
+            response_obj["NextToken"] = next_token
+        return json.dumps(response_obj)
+
+    def delete_scaling_policy(self):
+        self.applicationautoscaling_backend.delete_scaling_policy(
+            policy_name=self._get_param("PolicyName"),
+            service_namespace=self._get_param("ServiceNamespace"),
+            resource_id=self._get_param("ResourceId"),
+            scalable_dimension=self._get_param("ScalableDimension"),
+        )
+        return json.dumps({})
+
     def _validate_params(self):
         """ Validate parameters.
             TODO Integrate this validation with the validation in models.py
@@ -95,3 +134,22 @@ def _build_target(t):
         "MinCapacity": t.min_capacity,
         "SuspendedState": t.suspended_state,
     }
+
+
+def _build_policy(p):
+    response = {
+        "PolicyARN": p.policy_arn,
+        "PolicyName": p.policy_name,
+        "ServiceNamespace": p.service_namespace,
+        "ResourceId": p.resource_id,
+        "ScalableDimension": p.scalable_dimension,
+        "PolicyType": p.policy_type,
+        "CreationTime": p.creation_time,
+    }
+    if p.policy_type == "StepScaling":
+        response["StepScalingPolicyConfiguration"] = p.step_scaling_policy_configuration
+    elif p.policy_type == "TargetTrackingScaling":
+        response[
+            "TargetTrackingScalingPolicyConfiguration"
+        ] = p.target_tracking_scaling_policy_configuration
+    return response
