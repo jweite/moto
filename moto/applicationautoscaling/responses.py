@@ -52,6 +52,19 @@ class ApplicationAutoScalingResponse(BaseResponse):
             return e.response()
         return json.dumps({})
 
+    def deregister_scalable_target(self):
+        """ Deregisters a scalable target. """
+        try:
+            self._validate_params()
+            self.applicationautoscaling_backend.deregister_scalable_target(
+                self._get_param("ServiceNamespace"),
+                self._get_param("ResourceId"),
+                self._get_param("ScalableDimension"),
+            )
+        except AWSValidationException as e:
+            return e.response()
+        return json.dumps({})
+
     def put_scaling_policy(self):
         policy = self.applicationautoscaling_backend.put_scaling_policy(
             policy_name=self._get_param("PolicyName"),

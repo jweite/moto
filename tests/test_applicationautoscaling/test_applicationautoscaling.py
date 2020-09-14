@@ -413,3 +413,31 @@ def test_delete_scaling_policies():
     len(response["ScalingPolicies"]).should.equal(0)
 
     pass
+
+
+@mock_applicationautoscaling
+def test_deregister_scalable_target():
+    client = boto3.client("application-autoscaling", region_name=DEFAULT_REGION)
+    namespace = "sagemaker"
+    resource_id = "endpoint/MyEndPoint/variant/MyVariant"
+    scalable_dimension = "sagemaker:variant:DesiredInstanceCount"
+
+    client.register_scalable_target(
+        ServiceNamespace=namespace,
+        ResourceId=resource_id,
+        ScalableDimension=scalable_dimension,
+        MinCapacity=1,
+        MaxCapacity=8,
+    )
+
+    response = client.describe_scalable_targets(ServiceNamespace=namespace)
+    len(response["ScalableTargets"]).should.equal(1)
+
+    client.deregister_scalable_target(
+        ServiceNamespace=namespace,
+        ResourceId=resource_id,
+        ScalableDimension=scalable_dimension,
+    )
+
+    response = client.describe_scalable_targets(ServiceNamespace=namespace)
+    len(response["ScalableTargets"]).should.equal(0)

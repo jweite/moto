@@ -126,6 +126,17 @@ class ApplicationAutoscalingBackend(BaseBackend):
             self.targets[target.scalable_dimension][target.resource_id] = target
         return target
 
+    def deregister_scalable_target(self, namespace, r_id, dimension):
+        """ Registers or updates a scalable target. """
+        if self._scalable_target_exists(r_id, dimension):
+            del self.targets[dimension][r_id]
+        else:
+            raise AWSObjectNotFoundException(
+                "No scalable target found for service namespace: {}, resource ID: {}, scalable dimension: {}".format(
+                    namespace, r_id, dimension
+                )
+            )
+
     def put_scaling_policy(
         self,
         policy_name,
