@@ -1,12 +1,12 @@
 from __future__ import unicode_literals
 from moto.core.responses import BaseResponse
+from moto.core.exceptions import RESTError
 import json
 from .models import (
     applicationautoscaling_backends,
     ScalableDimensionValueSet,
     ServiceNamespaceValueSet,
 )
-from .exceptions import AWSValidationException
 
 
 class ApplicationAutoScalingResponse(BaseResponse):
@@ -15,10 +15,7 @@ class ApplicationAutoScalingResponse(BaseResponse):
         return applicationautoscaling_backends[self.region]
 
     def describe_scalable_targets(self):
-        try:
-            self._validate_params()
-        except AWSValidationException as e:
-            return e.response()
+        self._validate_params()
         service_namespace = self._get_param("ServiceNamespace")
         resource_ids = self._get_param("ResourceIds")
         scalable_dimension = self._get_param("ScalableDimension")
@@ -37,32 +34,26 @@ class ApplicationAutoScalingResponse(BaseResponse):
 
     def register_scalable_target(self):
         """ Registers or updates a scalable target. """
-        try:
-            self._validate_params()
-            self.applicationautoscaling_backend.register_scalable_target(
-                self._get_param("ServiceNamespace"),
-                self._get_param("ResourceId"),
-                self._get_param("ScalableDimension"),
-                min_capacity=self._get_int_param("MinCapacity"),
-                max_capacity=self._get_int_param("MaxCapacity"),
-                role_arn=self._get_param("RoleARN"),
-                suspended_state=self._get_param("SuspendedState"),
-            )
-        except AWSValidationException as e:
-            return e.response()
+        self._validate_params()
+        self.applicationautoscaling_backend.register_scalable_target(
+            self._get_param("ServiceNamespace"),
+            self._get_param("ResourceId"),
+            self._get_param("ScalableDimension"),
+            min_capacity=self._get_int_param("MinCapacity"),
+            max_capacity=self._get_int_param("MaxCapacity"),
+            role_arn=self._get_param("RoleARN"),
+            suspended_state=self._get_param("SuspendedState"),
+        )
         return json.dumps({})
 
     def deregister_scalable_target(self):
         """ Deregisters a scalable target. """
-        try:
-            self._validate_params()
-            self.applicationautoscaling_backend.deregister_scalable_target(
-                self._get_param("ServiceNamespace"),
-                self._get_param("ResourceId"),
-                self._get_param("ScalableDimension"),
-            )
-        except AWSValidationException as e:
-            return e.response()
+        self._validate_params()
+        self.applicationautoscaling_backend.deregister_scalable_target(
+            self._get_param("ServiceNamespace"),
+            self._get_param("ResourceId"),
+            self._get_param("ScalableDimension"),
+        )
         return json.dumps({})
 
     def put_scaling_policy(self):
@@ -133,7 +124,11 @@ class ApplicationAutoScalingResponse(BaseResponse):
                 len(messages), "; ".join(messages)
             )
         if message:
-            raise AWSValidationException(message)
+            raise RESTError(
+                error_type="ValidationException",
+                message=message,
+                template="error_json",
+            )
 
 
 def _build_target(t):

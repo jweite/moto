@@ -16,11 +16,3 @@ class AWSError(Exception):
     def response(self):
         resp = {"__type": self.TYPE, "message": self.message}
         return json.dumps(resp), dict(status=self.STATUS)
-
-
-class AWSValidationException(AWSError):
-    TYPE = "ValidationException"
-
-
-class AWSObjectNotFoundException(AWSError):
-    TYPE = "ObjectNotFoundException"

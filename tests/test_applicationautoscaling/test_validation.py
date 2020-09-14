@@ -2,9 +2,9 @@ from __future__ import unicode_literals
 import boto3
 from moto import mock_applicationautoscaling, mock_ecs
 from moto.applicationautoscaling import models
-from moto.applicationautoscaling.exceptions import AWSValidationException
+from moto.core.exceptions import RESTError
 from botocore.exceptions import ParamValidationError
-from nose.tools import assert_raises
+from nose.tools import assert_raises, assert_equal
 import sure  # noqa
 from botocore.exceptions import ClientError
 from parameterized import parameterized
@@ -116,8 +116,9 @@ def test_target_params_are_valid_success(namespace, r_id, dimension, expected):
             expected
         )
     else:
-        with assert_raises(AWSValidationException):
+        with assert_raises(RESTError) as err:
             models._target_params_are_valid(namespace, r_id, dimension)
+        assert_equal(err.exception.error_type, "ValidationException")
 
 
 # TODO add a test for not-supplied MinCapacity or MaxCapacity (ValidationException)

@@ -1,7 +1,7 @@
 from __future__ import unicode_literals
 from moto.core import BaseBackend, BaseModel
+from moto.core.exceptions import RESTError
 from moto.ecs import ecs_backends
-from .exceptions import AWSValidationException, AWSObjectNotFoundException
 from collections import OrderedDict
 from enum import Enum, unique
 import time
@@ -116,7 +116,11 @@ class ApplicationAutoscalingBackend(BaseBackend):
         resource_type, cluster, service = r_id.split("/")
         result = self.ecs_backend.describe_services(cluster, [service])
         if len(result) != 1:
-            raise AWSValidationException("ECS service doesn't exist: {}".format(r_id))
+            raise RESTError(
+                error_type="ValidationException",
+                message="ECS service doesn't exist: {}".format(r_id),
+                template="error_json",
+            )
         return True
 
     def _add_scalable_target(self, target):
@@ -131,10 +135,12 @@ class ApplicationAutoscalingBackend(BaseBackend):
         if self._scalable_target_exists(r_id, dimension):
             del self.targets[dimension][r_id]
         else:
-            raise AWSObjectNotFoundException(
-                "No scalable target found for service namespace: {}, resource ID: {}, scalable dimension: {}".format(
+            raise RESTError(
+                error_type="ValidationException",
+                message="No scalable target found for service namespace: {}, resource ID: {}, scalable dimension: {}".format(
                     namespace, r_id, dimension
-                )
+                ),
+                template="error_json",
             )
 
     def put_scaling_policy(
@@ -214,10 +220,12 @@ class ApplicationAutoscalingBackend(BaseBackend):
             del self.policies[policy_key]
             return {}
         else:
-            raise AWSObjectNotFoundException(
-                "No scaling policy found for service namespace: {}, resource ID: {}, scalable dimension: {}, policy name: {}".format(
+            raise RESTError(
+                error_type="ValidationException",
+                message="No scaling policy found for service namespace: {}, resource ID: {}, scalable dimension: {}, policy name: {}".format(
                     service_namespace, resource_id, scalable_dimension, policy_name
-                )
+                ),
+                template="error_json",
             )
 
 
@@ -241,8 +249,10 @@ def _target_params_are_valid(namespace, r_id, dimension):
         except ValueError:
             is_valid = False
     if not is_valid:
-        raise AWSValidationException(
-            "Unsupported service namespace, resource type or scalable dimension"
+        raise RESTError(
+            error_type="ValidationException",
+            message="Unsupported service namespace, resource type or scalable dimension",
+            template="error_json",
         )
     return is_valid
 
@@ -316,8 +326,10 @@ class FakeApplicationAutoscalingPolicy(BaseModel):
             self.step_scaling_policy_configuration = None
             self.target_tracking_scaling_policy_configuration = policy_body
         else:
-            raise AWSValidationException(
-                "Unknown policy type {} specified.".format(policy_type)
+            raise RESTError(
+                error_type="ValidationException",
+                message="Unknown policy type {} specified.".format(policy_type),
+                template="error_json",
             )
 
         self._policy_body = policy_body
