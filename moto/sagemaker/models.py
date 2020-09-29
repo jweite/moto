@@ -4,11 +4,15 @@ import os
 from boto3 import Session
 from copy import deepcopy
 from datetime import datetime
+from operator import attrgetter
+import pytz
 
 from moto.core import ACCOUNT_ID, BaseBackend, BaseModel
 from moto.core.exceptions import RESTError
 from moto.sagemaker import validators
 from .exceptions import MissingModel
+
+time_format = "%Y-%m-%d %H:%M:%S"
 
 
 class BaseObject(BaseModel):
@@ -78,9 +82,6 @@ class FakeTrainingJob(BaseObject):
         self.training_job_arn = FakeTrainingJob.arn_formatter(
             training_job_name, region_name
         )
-        self.creation_time = self.last_modified_time = datetime.now().strftime(
-            "%Y-%m-%d %H:%M:%S"
-        )
         self.model_artifacts = {
             "S3ModelArtifacts": os.path.join(
                 self.output_data_config["S3OutputPath"],
@@ -97,7 +98,7 @@ class FakeTrainingJob(BaseObject):
                 "Regex": "#quality_metric: host=\\S+, test dcg <score>=(\\S+)",
             }
         ]
-        now_string = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        now_string = datetime.now(tz=pytz.utc).strftime(time_format)
         self.creation_time = now_string
         self.last_modified_time = now_string
         self.training_start_time = now_string
@@ -123,6 +124,23 @@ class FakeTrainingJob(BaseObject):
         response_object = self.gen_response_object()
         return {
             k: v for k, v in response_object.items() if v is not None and v != [None]
+        }
+
+    @property
+    def list_operation_response_object(self):
+        response_fields = [
+            "TrainingJobName",
+            "TrainingJobArn",
+            "CreationTime",
+            "TrainingEndTime",
+            "LastModifiedTime",
+            "TrainingJobStatus",
+        ]
+        response_object = self.gen_response_object()
+        return {
+            k: v
+            for k, v in response_object.items()
+            if k in response_fields and v is not None and v != [None]
         }
 
     @property
@@ -160,7 +178,7 @@ class FakeEndpoint(BaseObject):
         self.endpoint_status = "InService"
         self.failure_reason = None
         self.creation_time = self.last_modified_time = datetime.now().strftime(
-            "%Y-%m-%d %H:%M:%S"
+            time_format
         )
 
     @property
@@ -206,7 +224,7 @@ class FakeEndpointConfig(BaseObject):
         self.data_capture_config = data_capture_config or {}
         self.tags = tags or []
         self.kms_key_id = kms_key_id
-        self.creation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.creation_time = datetime.now().strftime(time_format)
 
     def validate_production_variants(self, production_variants):
         for production_variant in production_variants:
@@ -326,7 +344,7 @@ class Model(BaseObject):
         tags=[],
     ):
         self.model_name = model_name
-        self.creation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self.creation_time = datetime.now().strftime(time_format)
         self.containers = containers
         self.tags = tags
         self.enable_network_isolation = False
@@ -883,6 +901,87 @@ class SageMakerModelBackend(BaseBackend):
                 message=message,
                 template="error_json",
             )
+
+    def list_training_jobs(
+        self,
+        next_token,
+        max_results,
+        creation_time_after,
+        creation_time_before,
+        last_modified_time_after,
+        last_modified_time_before,
+        name_contains,
+        status_equals,
+        sort_by,
+        sort_order,
+    ):
+        jobs = list(self.training_jobs.values())
+
+        if status_equals:
+            jobs = [job for job in jobs if job.training_job_status == status_equals]
+
+        if name_contains:
+            jobs = [job for job in jobs if name_contains in job.training_job_name]
+
+        if creation_time_after:
+            filter_datetime = (
+                datetime.fromtimestamp(creation_time_after, pytz.utc)
+                if isinstance(creation_time_after, int)
+                else creation_time_after
+            ).strftime(time_format)
+
+            jobs = [job for job in jobs if job.creation_time > filter_datetime]
+
+        if creation_time_before:
+            filter_datetime = (
+                datetime.fromtimestamp(creation_time_before, pytz.utc)
+                if isinstance(creation_time_before, int)
+                else creation_time_before
+            ).strftime(time_format)
+
+            jobs = [job for job in jobs if job.creation_time < filter_datetime]
+
+        if last_modified_time_after:
+            filter_datetime = (
+                datetime.fromtimestamp(last_modified_time_after, pytz.utc)
+                if isinstance(last_modified_time_after, int)
+                else last_modified_time_after
+            ).strftime(time_format)
+
+            jobs = [job for job in jobs if job.last_modified_time > filter_datetime]
+
+        if last_modified_time_before:
+            filter_datetime = (
+                datetime.fromtimestamp(last_modified_time_before, pytz.utc)
+                if isinstance(last_modified_time_before, int)
+                else last_modified_time_before
+            ).strftime(time_format)
+
+            jobs = [job for job in jobs if job.last_modified_time < filter_datetime]
+
+        reverse = sort_order == "Descending"
+
+        if sort_by == "Name":
+            jobs = sorted(jobs, key=attrgetter("training_job_name"), reverse=reverse)
+        elif sort_by == "CreationTime":
+            jobs = sorted(jobs, key=attrgetter("creation_time"), reverse=reverse)
+        elif sort_by == "Status":
+            jobs = sorted(jobs, key=attrgetter("training_job_status"), reverse=reverse)
+
+        start_offset = int(next_token) if next_token else 0
+        end_offset = start_offset + (
+            max_results if max_results else 100
+        )  # Arbitrarily selected...
+        jobs_paginated = jobs[start_offset:end_offset]
+
+        response = {
+            "TrainingJobSummaries": [
+                job.list_operation_response_object for job in jobs_paginated
+            ]
+        }
+        if end_offset < len(jobs):
+            response["NextToken"] = str(end_offset)
+        return response
 
     def get_training_job_by_arn(self, arn):
         training_jobs = [

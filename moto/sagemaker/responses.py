@@ -239,3 +239,19 @@ class SageMakerResponse(BaseResponse):
         training_job_name = self._get_param("TrainingJobName")
         self.sagemaker_backend.delete_training_job(training_job_name)
         return 200, {}, json.dumps("{}")
+
+    @amzn_request_id
+    def list_training_jobs(self):
+        response = self.sagemaker_backend.list_training_jobs(
+            next_token=self._get_param("NextToken"),
+            max_results=self._get_param("MaxResults"),
+            creation_time_after=self._get_param("CreationTimeAfter"),
+            creation_time_before=self._get_param("CreationTimeBefore"),
+            last_modified_time_after=self._get_param("LastModifiedTimeAfter"),
+            last_modified_time_before=self._get_param("LastModifiedTimeBefore"),
+            name_contains=self._get_param("NameContains"),
+            status_equals=self._get_param("StatusEquals"),
+            sort_by=self._get_param("SortBy"),
+            sort_order=self._get_param("SortOrder"),
+        )
+        return json.dumps(response)

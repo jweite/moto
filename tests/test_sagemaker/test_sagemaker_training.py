@@ -3,7 +3,9 @@ from __future__ import unicode_literals
 
 import boto3
 import datetime
+import pytz
 import sure  # noqa
+import time
 
 from moto import mock_sagemaker
 from moto.sts.models import ACCOUNT_ID
@@ -124,4 +126,99 @@ def test_create_training_job():
     assert_true("Value" in resp["FinalMetricDataList"][0])
     assert_true("Timestamp" in resp["FinalMetricDataList"][0])
 
-    pass
+
+@mock_sagemaker
+def test_list_training_jobs():
+    sagemaker = boto3.client("sagemaker", region_name=TEST_REGION_NAME)
+
+    container = "382416733822.dkr.ecr.us-east-1.amazonaws.com/linear-learner:1"
+    bucket = "my-bucket"
+    prefix = "sagemaker/DEMO-breast-cancer-prediction/"
+
+    params = {
+        "AlgorithmSpecification": {
+            "TrainingImage": container,
+            "TrainingInputMode": "File",
+        },
+        "RoleArn": FAKE_ROLE_ARN,
+        "OutputDataConfig": {"S3OutputPath": "s3://{}/{}/".format(bucket, prefix)},
+        "ResourceConfig": {
+            "InstanceCount": 1,
+            "InstanceType": "ml.c4.2xlarge",
+            "VolumeSizeInGB": 10,
+        },
+        "StoppingCondition": {"MaxRuntimeInSeconds": 60 * 60},
+    }
+
+    params["TrainingJobName"] = "Training2ndJob"
+    resp = sagemaker.create_training_job(**params)
+    assert_equal(resp["ResponseMetadata"]["HTTPStatusCode"], 200)
+
+    time.sleep(1)
+    time_after_first_job = datetime.datetime.now(tz=pytz.utc)
+    time.sleep(1)
+
+    params["TrainingJobName"] = "TrainingFirstJob"
+    resp = sagemaker.create_training_job(**params)
+    assert_equal(resp["ResponseMetadata"]["HTTPStatusCode"], 200)
+
+    time.sleep(2)
+
+    params["TrainingJobName"] = "ThirdJob"
+    resp = sagemaker.create_training_job(**params)
+    assert_equal(resp["ResponseMetadata"]["HTTPStatusCode"], 200)
+
+    resp = sagemaker.list_training_jobs()
+    assert_equal(len(resp["TrainingJobSummaries"]), 3)
+
+    resp = sagemaker.list_training_jobs(NameContains="Job")
+    assert_equal(len(resp["TrainingJobSummaries"]), 3)
+
+    resp = sagemaker.list_training_jobs(NameContains="Third")
+    assert_equal(len(resp["TrainingJobSummaries"]), 1)
+
+    resp = sagemaker.list_training_jobs(NameContains="Training")
+    assert_equal(len(resp["TrainingJobSummaries"]), 2)
+
+    resp = sagemaker.list_training_jobs(NameContains="Fourth")
+    assert_equal(len(resp["TrainingJobSummaries"]), 0)
+
+    resp = sagemaker.list_training_jobs(StatusEquals="Completed")
+    assert_equal(len(resp["TrainingJobSummaries"]), 3)
+
+    resp = sagemaker.list_training_jobs(StatusEquals="Failed")
+    assert_equal(len(resp["TrainingJobSummaries"]), 0)
+
+    resp = sagemaker.list_training_jobs(SortBy="Name")
+    assert_equal(resp["TrainingJobSummaries"][0]["TrainingJobName"], "ThirdJob")
+
+    resp = sagemaker.list_training_jobs(SortBy="Name", SortOrder="Descending")
+    assert_equal(resp["TrainingJobSummaries"][0]["TrainingJobName"], "TrainingFirstJob")
+
+    resp = sagemaker.list_training_jobs(SortBy="CreationTime")
+    assert_equal(resp["TrainingJobSummaries"][0]["TrainingJobName"], "Training2ndJob")
+
+    resp = sagemaker.list_training_jobs(SortBy="CreationTime", SortOrder="Descending")
+    assert_equal(resp["TrainingJobSummaries"][0]["TrainingJobName"], "ThirdJob")
+
+    resp = sagemaker.list_training_jobs(CreationTimeBefore=time_after_first_job)
+    assert_equal(len(resp["TrainingJobSummaries"]), 1)
+    assert_equal(resp["TrainingJobSummaries"][0]["TrainingJobName"], "Training2ndJob")
+
+    resp = sagemaker.list_training_jobs(CreationTimeAfter=time_after_first_job)
+    assert_equal(len(resp["TrainingJobSummaries"]), 2)
+    job_names = [summary["TrainingJobName"] for summary in resp["TrainingJobSummaries"]]
+    assert_true(
+        all(job_name in ["TrainingFirstJob", "ThirdJob"] for job_name in job_names)
+    )
+
+    resp = sagemaker.list_training_jobs(LastModifiedTimeBefore=time_after_first_job)
+    assert_equal(len(resp["TrainingJobSummaries"]), 1)
+    assert_equal(resp["TrainingJobSummaries"][0]["TrainingJobName"], "Training2ndJob")
+
+    resp = sagemaker.list_training_jobs(LastModifiedTimeAfter=time_after_first_job)
+    assert_equal(len(resp["TrainingJobSummaries"]), 2)
+    job_names = [summary["TrainingJobName"] for summary in resp["TrainingJobSummaries"]]
+    assert_true(
+        all(job_name in ["TrainingFirstJob", "ThirdJob"] for job_name in job_names)
+    )
