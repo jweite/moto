@@ -155,13 +155,13 @@ def test_create_role_and_instance_profile():
     conn = boto.connect_iam()
     conn.create_instance_profile("my-profile", path="my-path")
     conn.create_role(
-        "my-role", assume_role_policy_document="some policy", path="my-path"
+        "my-role", assume_role_policy_document="some policy", path="/my-path/"
     )
 
     conn.add_role_to_instance_profile("my-profile", "my-role")
 
     role = conn.get_role("my-role")
-    role.path.should.equal("my-path")
+    role.path.should.equal("/my-path/")
     role.assume_role_policy_document.should.equal("some policy")
 
     profile = conn.get_instance_profile("my-profile")
@@ -548,6 +548,59 @@ def test_set_default_policy_version():
     versions.get("Versions")[1].get("IsDefaultVersion").shouldnt.be.ok
     versions.get("Versions")[2].get("Document").should.equal(json.loads(MOCK_POLICY_3))
     versions.get("Versions")[2].get("IsDefaultVersion").should.be.ok
+
+    conn.set_default_policy_version(
+        PolicyArn="arn:aws:iam::{}:policy/TestSetDefaultPolicyVersion".format(
+            ACCOUNT_ID
+        ),
+        VersionId="v1",
+    )
+    versions = conn.list_policy_versions(
+        PolicyArn="arn:aws:iam::{}:policy/TestSetDefaultPolicyVersion".format(
+            ACCOUNT_ID
+        )
+    )
+    versions.get("Versions")[0].get("Document").should.equal(json.loads(MOCK_POLICY))
+    versions.get("Versions")[0].get("IsDefaultVersion").should.be.ok
+    versions.get("Versions")[1].get("Document").should.equal(json.loads(MOCK_POLICY_2))
+    versions.get("Versions")[1].get("IsDefaultVersion").shouldnt.be.ok
+    versions.get("Versions")[2].get("Document").should.equal(json.loads(MOCK_POLICY_3))
+    versions.get("Versions")[2].get("IsDefaultVersion").shouldnt.be.ok
+
+    # Set default version for non-existing policy
+    conn.set_default_policy_version.when.called_with(
+        PolicyArn="arn:aws:iam::{}:policy/TestNonExistingPolicy".format(ACCOUNT_ID),
+        VersionId="v1",
+    ).should.throw(
+        ClientError,
+        "Policy arn:aws:iam::{}:policy/TestNonExistingPolicy not found".format(
+            ACCOUNT_ID
+        ),
+    )
+
+    # Set default version for incorrect version
+    conn.set_default_policy_version.when.called_with(
+        PolicyArn="arn:aws:iam::{}:policy/TestSetDefaultPolicyVersion".format(
+            ACCOUNT_ID
+        ),
+        VersionId="wrong_version_id",
+    ).should.throw(
+        ClientError,
+        "Value 'wrong_version_id' at 'versionId' failed to satisfy constraint: Member must satisfy regular expression pattern: v[1-9][0-9]*(\.[A-Za-z0-9-]*)?",
+    )
+
+    # Set default version for non-existing version
+    conn.set_default_policy_version.when.called_with(
+        PolicyArn="arn:aws:iam::{}:policy/TestSetDefaultPolicyVersion".format(
+            ACCOUNT_ID
+        ),
+        VersionId="v4",
+    ).should.throw(
+        ClientError,
+        "Policy arn:aws:iam::{}:policy/TestSetDefaultPolicyVersion version v4 does not exist or is not attachable.".format(
+            ACCOUNT_ID
+        ),
+    )
 
 
 @mock_iam
@@ -3880,3 +3933,77 @@ def test_policy_config_client():
         )["BaseConfigurationItems"][0]["resourceName"]
         == policies[8]["name"]
     )
+
+
+@mock_iam()
+def test_list_roles_with_more_than_100_roles_no_max_items_defaults_to_100():
+    iam = boto3.client("iam", region_name="us-east-1")
+    for i in range(150):
+        iam.create_role(
+            RoleName="test_role_{}".format(i), AssumeRolePolicyDocument="some policy"
+        )
+    response = iam.list_roles()
+    roles = response["Roles"]
+
+    assert response["IsTruncated"] is True
+    assert len(roles) == 100
+
+
+@mock_iam()
+def test_list_roles_max_item_and_marker_values_adhered():
+    iam = boto3.client("iam", region_name="us-east-1")
+    for i in range(10):
+        iam.create_role(
+            RoleName="test_role_{}".format(i), AssumeRolePolicyDocument="some policy"
+        )
+    response = iam.list_roles(MaxItems=2)
+    roles = response["Roles"]
+
+    assert response["IsTruncated"] is True
+    assert len(roles) == 2
+
+    response = iam.list_roles(Marker=response["Marker"])
+    roles = response["Roles"]
+
+    assert response["IsTruncated"] is False
+    assert len(roles) == 8
+
+
+@mock_iam()
+def test_list_roles_path_prefix_value_adhered():
+    iam = boto3.client("iam", region_name="us-east-1")
+    iam.create_role(
+        RoleName="test_role_without_path", AssumeRolePolicyDocument="some policy"
+    )
+    iam.create_role(
+        RoleName="test_role_with_path",
+        AssumeRolePolicyDocument="some policy",
+        Path="/TestPath/",
+    )
+
+    response = iam.list_roles(PathPrefix="/TestPath/")
+    roles = response["Roles"]
+
+    assert len(roles) == 1
+    assert roles[0]["RoleName"] == "test_role_with_path"
+
+
+@mock_iam()
+def test_list_roles_none_found_returns_empty_list():
+    iam = boto3.client("iam", region_name="us-east-1")
+
+    response = iam.list_roles()
+    roles = response["Roles"]
+    assert len(roles) == 0
+
+    response = iam.list_roles(PathPrefix="/TestPath")
+    roles = response["Roles"]
+    assert len(roles) == 0
+
+    response = iam.list_roles(Marker="10")
+    roles = response["Roles"]
+    assert len(roles) == 0
+
+    response = iam.list_roles(MaxItems=10)
+    roles = response["Roles"]
+    assert len(roles) == 0

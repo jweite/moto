@@ -1,18 +1,18 @@
 from __future__ import unicode_literals
+
 import re
 import uuid
+from copy import copy
 from datetime import datetime
 from random import random, randint
 
 import pytz
 from boto3 import Session
 
-from moto.core.exceptions import JsonRESTError
 from moto.core import BaseBackend, BaseModel, CloudFormationModel
-from moto.core.utils import unix_time
+from moto.core.exceptions import JsonRESTError
+from moto.core.utils import unix_time, pascal_to_camelcase, remap_nested_keys
 from moto.ec2 import ec2_backends
-from copy import copy
-
 from .exceptions import (
     ServiceNotFoundException,
     TaskDefinitionNotFoundException,
@@ -174,8 +174,10 @@ class TaskDefinition(BaseObject, CloudFormationModel):
         family = properties.get(
             "Family", "task-definition-{0}".format(int(random() * 10 ** 6))
         )
-        container_definitions = properties["ContainerDefinitions"]
-        volumes = properties.get("Volumes")
+        container_definitions = remap_nested_keys(
+            properties.get("ContainerDefinitions", []), pascal_to_camelcase
+        )
+        volumes = remap_nested_keys(properties.get("Volumes", []), pascal_to_camelcase)
 
         ecs_backend = ecs_backends[region_name]
         return ecs_backend.register_task_definition(
@@ -481,6 +483,7 @@ class ContainerInstance(BaseObject):
             if ec2_instance.platform == "windows"
             else "linux",  # options are windows and linux, linux is default
         }
+        self.registered_at = datetime.now(pytz.utc)
 
     @property
     def response_object(self):
@@ -489,6 +492,10 @@ class ContainerInstance(BaseObject):
             self._format_attribute(name, value)
             for name, value in response_object["attributes"].items()
         ]
+        if isinstance(response_object["registeredAt"], datetime):
+            response_object["registeredAt"] = unix_time(
+                response_object["registeredAt"].replace(tzinfo=None)
+            )
         return response_object
 
     def _format_attribute(self, name, value):
@@ -935,10 +942,30 @@ class EC2ContainerServiceBackend(BaseBackend):
                 )
             )
 
+        if family:
+            task_definition_arns = self.list_task_definitions(family)
+            filtered_tasks = list(
+                filter(
+                    lambda t: t.task_definition_arn in task_definition_arns,
+                    filtered_tasks,
+                )
+            )
+
         if started_by:
             filtered_tasks = list(
                 filter(lambda t: started_by == t.started_by, filtered_tasks)
             )
+
+        if service_name:
+            # TODO: We can't filter on `service_name` until the backend actually
+            # launches tasks as part of the service creation process.
+            pass
+
+        if desiredStatus:
+            filtered_tasks = list(
+                filter(lambda t: t.desired_status == desiredStatus, filtered_tasks)
+            )
+
         return [t.task_arn for t in filtered_tasks]
 
     def stop_task(self, cluster_str, task_str, reason):

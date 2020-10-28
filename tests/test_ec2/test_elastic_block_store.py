@@ -9,11 +9,11 @@ import boto
 import boto3
 from botocore.exceptions import ClientError
 from boto.exception import EC2ResponseError
-from freezegun import freeze_time
 import sure  # noqa
 
 from moto import mock_ec2_deprecated, mock_ec2
 from moto.ec2.models import OWNER_ID
+from moto.kms import mock_kms
 
 
 @mock_ec2_deprecated
@@ -834,22 +834,26 @@ def test_volume_property_hidden_when_no_tags_exist():
     volume_response.get("Tags").should.equal(None)
 
 
-@freeze_time
 @mock_ec2
 def test_copy_snapshot():
     ec2_client = boto3.client("ec2", region_name="eu-west-1")
     dest_ec2_client = boto3.client("ec2", region_name="eu-west-2")
 
     volume_response = ec2_client.create_volume(AvailabilityZone="eu-west-1a", Size=10)
+    tag_spec = [
+        {"ResourceType": "snapshot", "Tags": [{"Key": "key", "Value": "value"}]}
+    ]
 
     create_snapshot_response = ec2_client.create_snapshot(
-        VolumeId=volume_response["VolumeId"]
+        VolumeId=volume_response["VolumeId"], TagSpecifications=tag_spec
     )
 
     copy_snapshot_response = dest_ec2_client.copy_snapshot(
         SourceSnapshotId=create_snapshot_response["SnapshotId"],
         SourceRegion="eu-west-1",
+        TagSpecifications=tag_spec,
     )
+    copy_snapshot_response["Tags"].should.equal(tag_spec[0]["Tags"])
 
     ec2 = boto3.resource("ec2", region_name="eu-west-1")
     dest_ec2 = boto3.resource("ec2", region_name="eu-west-2")
@@ -912,3 +916,65 @@ def test_search_for_many_snapshots():
     snapshots_response = ec2_client.describe_snapshots(SnapshotIds=snapshot_ids)
 
     assert len(snapshots_response["Snapshots"]) == len(snapshot_ids)
+
+
+@mock_ec2
+def test_create_unencrypted_volume_with_kms_key_fails():
+    resource = boto3.resource("ec2", region_name="us-east-1")
+    with assert_raises(ClientError) as ex:
+        resource.create_volume(
+            AvailabilityZone="us-east-1a", Encrypted=False, KmsKeyId="key", Size=10
+        )
+    ex.exception.response["Error"]["Code"].should.equal("InvalidParameterDependency")
+    ex.exception.response["Error"]["Message"].should.contain("KmsKeyId")
+
+
+@mock_kms
+@mock_ec2
+def test_create_encrypted_volume_without_kms_key_should_use_default_key():
+    kms = boto3.client("kms", region_name="us-east-1")
+    # Default master key for EBS does not exist until needed.
+    with assert_raises(ClientError) as ex:
+        kms.describe_key(KeyId="alias/aws/ebs")
+    ex.exception.response["Error"]["Code"].should.equal("NotFoundException")
+    # Creating an encrypted volume should create (and use) the default key.
+    resource = boto3.resource("ec2", region_name="us-east-1")
+    volume = resource.create_volume(
+        AvailabilityZone="us-east-1a", Encrypted=True, Size=10
+    )
+    default_ebs_key_arn = kms.describe_key(KeyId="alias/aws/ebs")["KeyMetadata"]["Arn"]
+    volume.kms_key_id.should.equal(default_ebs_key_arn)
+    volume.encrypted.should.be.true
+    # Subsequent encrypted volumes should use the now-created default key.
+    volume = resource.create_volume(
+        AvailabilityZone="us-east-1a", Encrypted=True, Size=10
+    )
+    volume.kms_key_id.should.equal(default_ebs_key_arn)
+    volume.encrypted.should.be.true
+
+
+@mock_ec2
+def test_create_volume_with_kms_key():
+    resource = boto3.resource("ec2", region_name="us-east-1")
+    volume = resource.create_volume(
+        AvailabilityZone="us-east-1a", Encrypted=True, KmsKeyId="key", Size=10
+    )
+    volume.kms_key_id.should.equal("key")
+    volume.encrypted.should.be.true
+
+
+@mock_ec2
+def test_kms_key_id_property_hidden_when_volume_not_encrypted():
+    client = boto3.client("ec2", region_name="us-east-1")
+    resp = client.create_volume(AvailabilityZone="us-east-1a", Encrypted=False, Size=10)
+    resp["Encrypted"].should.be.false
+    resp.should_not.have.key("KmsKeyId")
+    resp = client.describe_volumes(VolumeIds=[resp["VolumeId"]])
+    resp["Volumes"][0]["Encrypted"].should.be.false
+    resp["Volumes"][0].should_not.have.key("KmsKeyId")
+    resource = boto3.resource("ec2", region_name="us-east-1")
+    volume = resource.create_volume(
+        AvailabilityZone="us-east-1a", Encrypted=False, Size=10
+    )
+    volume.encrypted.should.be.false
+    volume.kms_key_id.should.be.none

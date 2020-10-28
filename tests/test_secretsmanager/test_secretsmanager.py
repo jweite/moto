@@ -106,6 +106,26 @@ def test_get_secret_that_has_no_value():
 
 
 @mock_secretsmanager
+def test_get_secret_version_that_does_not_exist():
+    conn = boto3.client("secretsmanager", region_name="us-west-2")
+
+    result = conn.create_secret(Name="java-util-test-password")
+    secret_arn = result["ARN"]
+    missing_version_id = "00000000-0000-0000-0000-000000000000"
+
+    with assert_raises(ClientError) as cm:
+        conn.get_secret_value(SecretId=secret_arn, VersionId=missing_version_id)
+
+    assert_equal(
+        (
+            "An error occurred (ResourceNotFoundException) when calling the GetSecretValue operation: Secrets "
+            "Manager can't find the specified secret value for VersionId: 00000000-0000-0000-0000-000000000000"
+        ),
+        cm.exception.response["Error"]["Message"],
+    )
+
+
+@mock_secretsmanager
 def test_create_secret():
     conn = boto3.client("secretsmanager", region_name="us-east-1")
 
@@ -439,8 +459,9 @@ def test_describe_secret_with_arn():
     secret_description = conn.describe_secret(SecretId=results["ARN"])
 
     assert secret_description  # Returned dict is not empty
-    assert secret_description["Name"] == ("test-secret")
-    assert secret_description["ARN"] != results["ARN"]
+    secret_description["Name"].should.equal("test-secret")
+    secret_description["ARN"].should.equal(results["ARN"])
+    conn.list_secrets()["SecretList"][0]["ARN"].should.equal(results["ARN"])
 
 
 @mock_secretsmanager
@@ -501,7 +522,9 @@ def test_restore_secret_that_does_not_exist():
 @mock_secretsmanager
 def test_rotate_secret():
     conn = boto3.client("secretsmanager", region_name="us-west-2")
-    conn.create_secret(Name=DEFAULT_SECRET_NAME, SecretString="foosecret")
+    conn.create_secret(
+        Name=DEFAULT_SECRET_NAME, SecretString="foosecret", Description="foodescription"
+    )
 
     rotated_secret = conn.rotate_secret(SecretId=DEFAULT_SECRET_NAME)
 
@@ -509,6 +532,10 @@ def test_rotate_secret():
     assert rotated_secret["ARN"] != ""  # Test arn not empty
     assert rotated_secret["Name"] == DEFAULT_SECRET_NAME
     assert rotated_secret["VersionId"] != ""
+
+    describe_secret = conn.describe_secret(SecretId=DEFAULT_SECRET_NAME)
+
+    assert describe_secret["Description"] == "foodescription"
 
 
 @mock_secretsmanager
@@ -885,3 +912,33 @@ def test_update_secret_marked_as_deleted_after_restoring():
     assert updated_secret["ARN"]
     assert updated_secret["Name"] == "test-secret"
     assert updated_secret["VersionId"] != ""
+
+
+@mock_secretsmanager
+def test_tag_resource():
+    conn = boto3.client("secretsmanager", region_name="us-west-2")
+    conn.create_secret(Name="test-secret", SecretString="foosecret")
+    conn.tag_resource(
+        SecretId="test-secret", Tags=[{"Key": "FirstTag", "Value": "SomeValue"},],
+    )
+
+    conn.tag_resource(
+        SecretId="test-secret", Tags=[{"Key": "SecondTag", "Value": "AnotherValue"},],
+    )
+
+    secrets = conn.list_secrets()
+    assert secrets["SecretList"][0].get("Tags") == [
+        {"Key": "FirstTag", "Value": "SomeValue"},
+        {"Key": "SecondTag", "Value": "AnotherValue"},
+    ]
+
+    with assert_raises(ClientError) as cm:
+        conn.tag_resource(
+            SecretId="dummy-test-secret",
+            Tags=[{"Key": "FirstTag", "Value": "SomeValue"},],
+        )
+
+    assert_equal(
+        "Secrets Manager can't find the specified secret.",
+        cm.exception.response["Error"]["Message"],
+    )

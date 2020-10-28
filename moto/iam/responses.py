@@ -133,7 +133,7 @@ class IamResponse(BaseResponse):
                             entity_users.append(user.name)
 
         elif entity == "Role":
-            roles = iam_backend.list_roles(path_prefix, marker, max_items)
+            roles, _ = iam_backend.list_roles(path_prefix, marker, max_items)
             if roles:
                 for role in roles:
                     for p in role.managed_policies:
@@ -156,7 +156,7 @@ class IamResponse(BaseResponse):
                         if p == policy_arn:
                             entity_users.append(user.name)
 
-            roles = iam_backend.list_roles(path_prefix, marker, max_items)
+            roles, _ = iam_backend.list_roles(path_prefix, marker, max_items)
             if roles:
                 for role in roles:
                     for p in role.managed_policies:
@@ -174,6 +174,13 @@ class IamResponse(BaseResponse):
         return template.render(
             roles=entity_roles, users=entity_users, groups=entity_groups
         )
+
+    def set_default_policy_version(self):
+        policy_arn = self._get_param("PolicyArn")
+        version_id = self._get_param("VersionId")
+        iam_backend.set_default_policy_version(policy_arn, version_id)
+        template = self.response_template(SET_DEFAULT_POLICY_VERSION_TEMPLATE)
+        return template.render()
 
     def create_role(self):
         role_name = self._get_param("RoleName")
@@ -349,9 +356,13 @@ class IamResponse(BaseResponse):
         return template.render()
 
     def list_roles(self):
-        roles = iam_backend.get_roles()
+        path_prefix = self._get_param("PathPrefix", "/")
+        marker = self._get_param("Marker", "0")
+        max_items = self._get_param("MaxItems", 100)
+
+        roles, marker = iam_backend.list_roles(path_prefix, marker, max_items)
         template = self.response_template(LIST_ROLES_TEMPLATE)
-        return template.render(roles=roles)
+        return template.render(roles=roles, marker=marker)
 
     def list_instance_profiles(self):
         profiles = iam_backend.get_instance_profiles()
@@ -1010,6 +1021,13 @@ LIST_ENTITIES_FOR_POLICY_TEMPLATE = """<ListEntitiesForPolicyResponse>
 </ListEntitiesForPolicyResponse>"""
 
 
+SET_DEFAULT_POLICY_VERSION_TEMPLATE = """<SetDefaultPolicyVersionResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
+  <ResponseMetadata>
+    <RequestId>35f241af-3ebc-11e4-9d0d-6f969EXAMPLE</RequestId>
+  </ResponseMetadata>
+</SetDefaultPolicyVersionResponse>"""
+
+
 ATTACH_ROLE_POLICY_TEMPLATE = """<AttachRolePolicyResponse>
   <ResponseMetadata>
     <RequestId>7a62c49f-347e-4fc4-9331-6e8eEXAMPLE</RequestId>
@@ -1365,7 +1383,10 @@ REMOVE_ROLE_FROM_INSTANCE_PROFILE_TEMPLATE = """<RemoveRoleFromInstanceProfileRe
 
 LIST_ROLES_TEMPLATE = """<ListRolesResponse xmlns="https://iam.amazonaws.com/doc/2010-05-08/">
   <ListRolesResult>
-    <IsTruncated>false</IsTruncated>
+    <IsTruncated>{{ 'true' if marker else 'false' }}</IsTruncated>
+    {% if marker %}
+    <Marker>{{ marker }}</Marker>
+    {% endif %}
     <Roles>
       {% for role in roles %}
       <member>
